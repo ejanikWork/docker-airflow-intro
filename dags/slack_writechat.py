@@ -3,13 +3,6 @@ from slack_sdk.errors import SlackApiError
 from airflow.models import Variable
 
 
-def read_secret(client, path, key):
-    read_response = client.secrets.kv.v2.read_secret_version(path=path)
-    key_value_pair = read_response['data']['data']
-    value = key_value_pair[key]
-    return value
-
-
 def send_message_to_slack(slack_client, text, channel):
     try:
         response = slack_client.chat_postMessage(channel=channel, text=text)
