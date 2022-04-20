@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.sensors.filesystem import FileSensor
@@ -7,7 +9,9 @@ from airflow.operators.bash import BashOperator
 from airflow.utils.task_group import TaskGroup
 from airflow.models import DagRun
 import pendulum
-from slack_writechat import alert_to_slack
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+from airflow.models import Variable
 
 
 def _process():
@@ -27,6 +31,29 @@ def execution_date_fn(execution_date, dag, task, **kwargs):
     return pendulum.instance(dag_execution_date)
 
 
+def send_message_to_slack(slack_client, text, channel):
+    try:
+        response = slack_client.chat_postMessage(channel=channel, text=text)
+        assert response["message"]["text"] == text
+    except SlackApiError as e:
+        # You will get a SlackApiError if "ok" is False
+        assert e.response["ok"] is False
+        assert e.response["error"]  # str like 'invalid_auth', 'channel_not_found'
+        print(f"Got an error kek: {e.response['error']}")
+
+
+def alert_to_slack(**kwargs):
+    slack_token = Variable.get_variable_from_secrets("slack_token")
+
+    slack_client = WebClient(token=slack_token)
+
+    dag_id = kwargs['dag_id']
+    exec_date = kwargs['execution_date']
+    channel = kwargs['channel']
+    text = "Dag: " + dag_id + " finished at " + exec_date
+    send_message_to_slack(slack_client, text, channel)
+
+
 def define_taskgroup():
     with TaskGroup(group_id="process_results") as tg:
         sensor_triggered_dag = ExternalTaskSensor(
@@ -41,15 +68,10 @@ def define_taskgroup():
         )
         create_timestamp = BashOperator(
             task_id="creating_timestamp",
-            bash_command="touch ../finished#$({{ ts_nodash }})"
+            bash_command="touch finished#$({{ ts_nodash }})"
         )
         sensor_triggered_dag >> print_result >> create_timestamp
     return tg
-
-
-triggeredDagId = "dag_id_1"
-filename = "run"
-dag_id = "master_dag"
 
 
 class SmartFileSensor(FileSensor):
@@ -63,13 +85,17 @@ class SmartFileSensor(FileSensor):
         return result
 
 
-with DAG(dag_id=dag_id, start_date=now, schedule_interval=None, catchup=False) as dag:
+triggeredDagId = "dag_id_1"
+filename = "run"
+dag_id = "master_dag"
+with DAG(dag_id=dag_id, start_date=datetime(2022, 1, 1), schedule_interval=None, catchup=False) as dag:
 
     run_sensor = SmartFileSensor(
         filepath=filename,
         task_id="sensing_file",
         dag=dag,
-        fs_conn_id="FileSensorRunPath"
+        fs_conn_id="FileSensorRunPath",
+        poke_interval=10
     )
     trigger_dag = TriggerDagRunOperator(
         task_id="triggering_dag",
