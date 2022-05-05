@@ -72,3 +72,4 @@ for key in config:
             do_xcom_push=True
         )
         connect >> get_current_user >> check_table >> [create_table, dummy_task] >> insert_row >> query
+        globals()[key] = DAG(key)
